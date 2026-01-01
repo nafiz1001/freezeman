@@ -1,0 +1,13 @@
+FROM docker.io/postgres:18.1-alpine3.23
+
+COPY ./backend/dependencies/pg_fzy /pg_fzy
+
+RUN apk add --no-cache make postgresql-dev libpq
+
+RUN cd /pg_fzy && make && make install
+
+RUN psql -c "CREATE EXTENSION fzy;" postgres
+
+# Usage
+# - Mount volume on PGDATA to persist database: PGDATA=/var/lib/postgresql/18/docker
+# - Mount executable shell scripts under /docker-entrypoint-initdb.d/ for additional initialization
