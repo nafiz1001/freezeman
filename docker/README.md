@@ -5,7 +5,7 @@ Current working directory is assumed to be the project's root directory.
 ## Prepare Database Container
 
 ```sh
-podman container run --rm --name freezeman-db --publish 5432:5432 --image-volume=ignore --env "POSTGRES_PASSWORD=postgres" --detach docker.io/postgres:18.1-alpine3.23
+podman container run --name freezeman-db --publish 5432:5432 --image-volume=ignore --env "POSTGRES_PASSWORD=postgres" --detach docker.io/postgres:18.1-alpine3.23
 gunzip -c "$(ls ~/Downloads/*.pgsql.gz | tail -n 1)" | podman exec --interactive freezeman-db psql -U postgres
 podman exec freezeman-db psql -U postgres -c "alter role admin with password 'admin'; alter role admin createdb;"
 source backend/env/bin/activate && python manage.py backend/migrate # TODO: figure out how this step would make sense with k8s
