@@ -9,6 +9,7 @@ podman container run --name freezeman-db --publish 5432:5432 --image-volume=igno
 gunzip -c "$(ls ~/Downloads/*.pgsql.gz | tail -n 1)" | podman exec --interactive freezeman-db psql -U postgres
 podman exec freezeman-db psql -U postgres -c "alter role admin with password 'admin'; alter role admin createdb;"
 source backend/env/bin/activate && python manage.py backend/migrate # TODO: figure out how this step would make sense with k8s
+podman container stop freezeman-db
 podman container commit freezeman-db # Save copy of the db before work. Only useful for dev.
 ```
 
