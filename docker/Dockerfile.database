@@ -6,8 +6,9 @@ RUN apk add --no-cache make postgresql-dev libpq
 
 RUN cd /pg_fzy && make && make install
 
-RUN psql -c "CREATE EXTENSION fzy;" postgres
-
 # Usage
 # - Mount volume on PGDATA to persist database: PGDATA=/var/lib/postgresql/18/docker
-# - Mount executable shell scripts under /docker-entrypoint-initdb.d/ for additional initialization
+# - Mount docker-entrypoint-initdb.d/ on /docker-entrypoint-initdb.d/ for additional initialization.
+#   These initialization files will be executed in sorted name order as defined by the current locale, which defaults to en_US.utf8.
+#   In the case of FreezeMan, you put your .pgsql.gz database dumps there but prepend the filename with a number lower than 2
+#   (e.g. `1-2025-12-17.pgsql.gz`).

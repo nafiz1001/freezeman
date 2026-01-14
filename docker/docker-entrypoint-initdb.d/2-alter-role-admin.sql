@@ -1,0 +1,3 @@
+CREATE EXTENSION fzy;
+ALTER ROLE admin WITH PASSWORD 'admin';
+ALTER ROLE admin createdb;

@@ -5,12 +5,12 @@ Current working directory is assumed to be the project's root directory.
 ## Prepare Database Container
 
 ```sh
-podman container run --name freezeman-db --publish 5432:5432 --image-volume=ignore --env "POSTGRES_PASSWORD=postgres" --detach docker.io/postgres:18.1-alpine3.23
-gunzip -c "$(ls ~/Downloads/*.pgsql.gz | tail -n 1)" | podman exec --interactive freezeman-db psql -U postgres
-podman exec freezeman-db psql -U postgres -c "alter role admin with password 'admin'; alter role admin createdb;"
-source backend/env/bin/activate && python backend/manage.py migrate # TODO: figure out how this step would make sense with k8s
+podman image build --file ./docker/Dockerfile --tag freezeman-db .
+podman container run --name freezeman-db --publish 5432:5432 --image-volume=ignore --env "POSTGRES_PASSWORD=postgres" -v freezeman-volume:/var/lib/postgresql/18/docker -v $(pwd)/docker/docker-entrypoint-initdb.d/:/docker-entrypoint-initdb.d/ --network freezeman-network --detach freezeman-db
+# TODO: figure out how the rest would make sense with k8s
+# TODO: somehow check if fms database setup done
+source backend/env/bin/activate && python backend/manage.py migrate
 podman container stop freezeman-db
-podman container commit freezeman-db # Save copy of the db before work. Only useful for dev.
 ```
 
 ## Prepare Backend Container
@@ -34,8 +34,8 @@ podman network create freezeman-network
 ### Integration
 
 ```sh
-podman container run --name freezeman-db       --network freezeman-network localhost/freezeman-db
+podman container restart    freezeman-db
 podman container run --name freezeman-backend  --network freezeman-network --env 'PG_HOST=freezeman-db' localhost/freezeman-backend
-podman container run --name freezeman-frontend --network freezeman-network localhost/freezeman-frontend
+podman container run --name freezeman-frontend --network freezeman-network                              localhost/freezeman-frontend
 podman container run --name freezeman-nginx    --network freezeman-network -v $(pwd)/docker/freezeman.nginx.conf:/etc/nginx/nginx.conf:ro -p 8000:80 --rm docker.io/library/nginx:1.29.4-alpine
 ```
