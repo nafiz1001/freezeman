@@ -2,6 +2,12 @@
 
 Current working directory is assumed to be the project's root directory.
 
+### Prepare Podman Network for Freezeman
+
+```sh
+podman network create freezeman-network
+```
+
 ## Prepare Database Container
 
 ```sh
@@ -23,12 +29,6 @@ podman image build --file ./docker/Dockerfile.backend-prod --tag freezeman-backe
 
 ```sh
 podman image build --file ./docker/Dockerfile.frontend-prod --tag freezeman-frontend .
-```
-
-### Prepare Podman Network for Freezeman
-
-```sh
-podman network create freezeman-network
 ```
 
 ### Integration
