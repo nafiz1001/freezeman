@@ -1,0 +1,40 @@
+
+# syntax=docker/dockerfile:1
+FROM docker.io/library/python:3.11.14-alpine3.23 AS build
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONUTF8=1
+
+WORKDIR /app/backend
+
+RUN apk add --no-cache build-base libffi-dev postgresql-dev openssl-dev musl-dev pkgconfig rust cargo
+RUN python -m pip install --upgrade pip
+
+COPY ./backend/requirements.txt .
+RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt \
+    && pip wheel --no-cache-dir --wheel-dir /wheels gunicorn eventlet
+
+# -----------------------
+FROM docker.io/library/python:3.11.14-alpine3.23 AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONOPTIMIZE=2 \
+    PYTHONUTF8=1
+
+WORKDIR /app/backend
+
+# Runtime libs only
+RUN apk add --no-cache libpq libffi tzdata git
+
+COPY --from=build /wheels /wheels
+RUN pip install --no-cache-dir /wheels/*
+
+COPY ./VERSION ./.git/ /app/
+COPY ./backend/ /app/backend/
+
+EXPOSE 80
+ENV FMS_PORT=80
+
+ENTRYPOINT ["gunicorn", "fms.wsgi:application", "--worker-class=eventlet"]

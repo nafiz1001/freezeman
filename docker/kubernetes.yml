@@ -1,0 +1,379 @@
+
+# -----------------------------
+# Namespace
+# -----------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: webapp
+
+---
+# -----------------------------
+# Secret: database password
+# Change the base64-encoded password below (example: echo -n 'supersecret' | base64)
+# -----------------------------
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-secret
+  namespace: webapp
+type: Opaque
+data:
+  POSTGRES_PASSWORD: c3VwZXJzZWNyZXQ=
+
+---
+# -----------------------------
+# ConfigMap: PostgreSQL init scripts
+# - All files here are run in lexical order at container's first startup.
+# - You can add .sql, .sh, or .sql.gz files.
+# -----------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pg-init-scripts
+  namespace: webapp
+data:
+  01_schema.sql: |
+    CREATE TABLE IF NOT EXISTS hello(
+      id SERIAL PRIMARY KEY,
+      message TEXT NOT NULL
+    );
+  02_seed.sql: |
+    INSERT INTO hello(message)
+    VALUES ('Hello from init script!')
+    ON CONFLICT DO NOTHING;
+  03_permissions.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+    psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<'SQL'
+    GRANT ALL PRIVILEGES ON TABLE hello TO appuser;
+    SQL
+
+---
+# -----------------------------
+# Service: PostgreSQL
+# -----------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: webapp
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: myapp
+spec:
+  type: ClusterIP
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: 5432
+  selector:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: myapp
+
+---
+# -----------------------------
+# StatefulSet: PostgreSQL with init scripts
+# NOTE:
+#  - Update POSTGRES_DB/POSTGRES_USER as needed.
+#  - Uses a PVC per pod created by volumeClaimTemplates.
+# -----------------------------
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: webapp
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: myapp
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+      app.kubernetes.io/part-of: myapp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/part-of: myapp
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: pg
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: appdb
+            - name: POSTGRES_USER
+              value: appuser
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: pg-init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "appuser", "-d", "appdb"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: pg-init-scripts
+          projected:
+            sources:
+              - configMap:
+                  name: pg-init-scripts
+                  defaultMode: 0755
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+        # storageClassName: <your-storage-class>  # uncomment if you need a specific class
+
+---
+# -----------------------------
+# Service: Backend
+# -----------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-svc
+  namespace: webapp
+  labels:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: myapp
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: myapp
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+
+---
+# -----------------------------
+# Deployment: Backend (Gunicorn)
+# Replace image and command for your app.
+# -----------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: webapp
+  labels:
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: myapp
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend
+      app.kubernetes.io/part-of: myapp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: backend
+        app.kubernetes.io/part-of: myapp
+    spec:
+      containers:
+        - name: backend
+          image: your-registry/your-backend:latest
+          imagePullPolicy: IfNotPresent
+          # Example Gunicorn command. Adjust module/app path and workers to your stack.
+          command: ["gunicorn"]
+          args: ["-b", "0.0.0.0:8000", "myapp.wsgi:application", "--workers", "3", "--timeout", "60"]
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: DB_HOST
+              value: postgres
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: appdb
+            - name: DB_USER
+              value: appuser
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: POSTGRES_PASSWORD
+            # If your app expects DATABASE_URL instead, uncomment and adapt:
+            # - name: DATABASE_URL
+            #   value: postgres://appuser:$(DB_PASSWORD)@postgres:5432/appdb
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+
+---
+# -----------------------------
+# Service: Frontend (Nginx)
+# -----------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-svc
+  namespace: webapp
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/part-of: myapp
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/part-of: myapp
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+
+---
+# -----------------------------
+# Deployment: Frontend (Nginx)
+# - Assumes your image already contains built static files at /usr/share/nginx/html.
+# - If you need a custom nginx.conf, you can mount it with a ConfigMap.
+# -----------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: webapp
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/part-of: myapp
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: frontend
+      app.kubernetes.io/part-of: myapp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: frontend
+        app.kubernetes.io/part-of: myapp
+    spec:
+      containers:
+        - name: nginx
+          image: your-registry/your-frontend-nginx:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+          # Optional: health checks
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+
+---
+# -----------------------------
+# Ingress: Path-based routing
+# - "/"      -> frontend-svc
+# - "/api/*" -> backend-svc, with path rewrite (strip /api)
+# Requires NGINX Ingress Controller (ingressClassName: nginx)
+# For TLS, add a secret and uncomment 'tls' section.
+# -----------------------------
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: webapp
+  namespace: webapp
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    # nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: your-domain.example.com
+      http:
+        paths:
+          - path: /api(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-svc
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-svc
+                port:
+                  number: 80
+  # tls:
+  #   - hosts:
+  #       - your-domain.example.com
+  #     secretName: your-tls-secret

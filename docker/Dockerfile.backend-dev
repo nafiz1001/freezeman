@@ -1,0 +1,17 @@
+FROM docker.io/library/python:3.11.14-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential libffi-dev git libpq-dev
+# postgresql-client-15 postgresql-server-dev-all # this should be done as part of database container setup
+
+# Set the working directory inside the container
+WORKDIR /app/backend/
+
+# run this command to install all dependencies
+COPY ./backend/requirements.txt .
+RUN pip install -r requirements.txt
+
+# Expose the Django port
+EXPOSE 8000
+
+# Run Django’s development server
+ENTRYPOINT ["python", "manage.py", "runserver", "0.0.0.0:8000"]

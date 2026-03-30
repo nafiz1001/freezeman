@@ -1,0 +1,8 @@
+FROM docker.io/alpine:3.23.2
+
+WORKDIR /extensions/pg_fzy
+
+COPY ./backend/dependencies/pg_fzy /extensions/pg_fzy
+
+RUN apk add --no-cache make postgresql-dev libpq
+RUN make
